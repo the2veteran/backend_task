@@ -7,12 +7,10 @@ import { redis } from '../services/redis';
 
 export default async function ordersRoute(fastify: FastifyInstance) {
 
-    /**
-     * POST /api/orders/execute
-     * Creates an order → enqueues → returns orderId
-     */
+    // ------------------ POST: create order ------------------
     fastify.post('/api/orders/execute', async (req, reply) => {
         const body = req.body as any;
+
         const tokenIn = body?.tokenIn;
         const tokenOut = body?.tokenOut;
         const amountIn = Number(body?.amountIn);
@@ -23,21 +21,18 @@ export default async function ordersRoute(fastify: FastifyInstance) {
 
         const orderId = uuidv4();
 
-        // Insert order
         await query(
             `INSERT INTO orders (id, status, order_type, token_in, token_out, amount_in, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
             [orderId, 'pending', 'market', tokenIn, tokenOut, amountIn, {}]
         );
 
-        // Insert event
         await query(
             `INSERT INTO order_events(order_id, status, details)
-       VALUES ($1, $2, $3)`,
+       VALUES ($1,$2,$3)`,
             [orderId, 'pending', { message: 'Order received' }]
         );
 
-        // Add to queue
         await orderQueue.add(
             'execute',
             { orderId, tokenIn, tokenOut, amountIn },
@@ -52,29 +47,32 @@ export default async function ordersRoute(fastify: FastifyInstance) {
         return reply.send({ orderId });
     });
 
-    /**
-     * WebSocket: /ws/:orderId
-     * Subscribes to updates published by Redis
-     */
+    // ------------------ WEBSOCKET: same endpoint ------------------
     fastify.get(
-        '/ws/:orderId',
+        '/api/orders/execute',
         { websocket: true },
-        (connection, req) => {
-            const { orderId } = req.params as any;
+        (ws, req) => {
+            const { orderId } = (req.query as any) || {};
+
+            if (!orderId) {
+                ws.close(1008, "orderId query param required");
+                return;
+            }
 
             const sub = redis.duplicate();
-
             const channel = `order:status:${orderId}`;
 
-            sub.subscribe(channel).catch(err =>
-                console.error('❌ Redis subscribe error:', err)
-            );
-
-            sub.on('message', (_channel, message) => {
-                connection.socket.send(message);
+            sub.subscribe(channel).catch(err => {
+                console.error("Redis subscribe error:", err);
             });
 
-            connection.socket.on('close', () => {
+            sub.on("message", (_channel, message) => {
+                try {
+                    ws.send(message);
+                } catch {}
+            });
+
+            ws.on("close", () => {
                 sub.unsubscribe(channel).finally(() => sub.quit());
             });
         }
