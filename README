@@ -1,0 +1,27 @@
+# Order Execution Engine (Assignment)
+
+This repo implements an order-execution engine (mock DEX routing + queue + worker + WebSocket streaming) used for the assignment.
+It supports placing orders via HTTP, routing between Raydium and Meteora (mocked), queueing with BullMQ, worker processing, DB persistence, and WebSocket streaming of lifecycle events.
+
+---
+
+## Quick status
+- ✅ HTTP API: `POST /api/orders/execute` — returns `orderId`
+- ✅ WebSocket: `GET /ws/:orderId` — streams live order lifecycle events
+- ✅ DB: Postgres tables `orders`, `order_events`, `order_failures`
+- ✅ Queue: BullMQ + Redis
+- ✅ Worker: `src/workers/orderWorker.ts` with routing + retry logic
+- ✅ Mock DEX: `src/services/mockDexRouter.ts` (quotes + execute)
+- ✅ Tests: Jest examples included
+
+---
+
+## Local dev (exact steps)
+
+**Prereqs:** Docker Desktop (compose), Node.js 18+, npm, Postman or Hoppscotch.
+
+1. Clone repo
+2. Copy `.env.example` → `.env` and update if needed (default values work with docker-compose).
+3. Start infra (Postgres + Redis + Adminer):
+   ```bash
+   docker compose up -d

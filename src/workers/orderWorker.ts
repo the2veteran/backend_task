@@ -4,33 +4,33 @@ import { Worker, Job } from "bullmq";
 import IORedis from "ioredis";
 import dotenv from "dotenv";
 import { MockDexRouter } from "../services/mockDexRouter";
-import { pool } from "../DB";
+import { query } from "../db";
 import { sleep } from "../utils/sleep";
 
 dotenv.config();
 
-/* ----------------------------- REDIS OPTIONS ----------------------------- */
+/* ----------------------- REDIS CONNECTION OPTIONS ------------------------ */
 
 const redisOptions = {
     host: process.env.REDIS_HOST || "localhost",
-    port: Number(process.env.REDIS_PORT) || 6379,
+    port: Number(process.env.REDIS_PORT || 6379),
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
 };
 
-/* ------------------------ PUBLISHER FOR ORDER EVENTS ---------------------- */
+/* ----------------------------- REDIS PUBLISHER --------------------------- */
 
 const publisher = new IORedis(redisOptions);
 
-/* ----------------------------- MOCK DEX SETUP ----------------------------- */
+/* ----------------------------- DEX ROUTER SETUP -------------------------- */
 
 const dex = new MockDexRouter();
 
-/* --------------------------- WORKER CONCURRENCY --------------------------- */
+/* ------------------------------ CONCURRENCY ------------------------------ */
 
 const MAX_CONC = Number(process.env.MAX_CONCURRENCY || 10);
 
-/* -------------------------- EVENT PUBLISH HELPER -------------------------- */
+/* --------------------------- PUBLISHER HELPER ---------------------------- */
 
 async function publishEvent(
     orderId: string,
@@ -44,18 +44,35 @@ async function publishEvent(
         details,
     };
 
-    // emit to Redis pub/sub
-    await publisher.publish("order_updates", JSON.stringify(payload));
+    console.log(`[ORDER ${orderId}] => ${status}`, details);
 
-    // persist to order_events table
-    await pool.query(
-        `INSERT INTO order_events(order_id, status, details)
-     VALUES($1, $2, $3)`,
-        [orderId, status, details]
-    );
+    try {
+        await publisher.publish(`order:status:${orderId}`, JSON.stringify(payload));
+    } catch (err) {
+        console.error("Redis publish failed:", (err as any)?.message);
+    }
+
+    try {
+        await query(
+            `INSERT INTO order_events(order_id, status, details)
+       VALUES ($1, $2, $3)`,
+            [orderId, status, details]
+        );
+    } catch (err) {
+        console.error("DB order_events insert failed:", (err as any)?.message);
+    }
+
+    try {
+        await query(
+            `UPDATE orders SET status=$1, updated_at=NOW() WHERE id=$2`,
+            [status, orderId]
+        );
+    } catch (err) {
+        console.error("DB status update failed:", (err as any)?.message);
+    }
 }
 
-/* -------------------------------- WORKER --------------------------------- */
+/* -------------------------------- WORKER -------------------------------- */
 
 const worker = new Worker(
     "orders",
@@ -70,12 +87,18 @@ const worker = new Worker(
             ),
         } = job.data;
 
-        /* --------------------------- 1) PENDING --------------------------- */
+        console.log(
+            `[ORDER ${orderId}] Worker started | ${tokenIn}→${tokenOut} | amount=${amountIn}`
+        );
+
+        /* ------------------------------ PENDING ------------------------------ */
+
         await publishEvent(orderId, "pending", {
             message: "Worker picked up job",
         });
 
-        /* --------------------------- 2) ROUTING --------------------------- */
+        /* ------------------------------ ROUTING ------------------------------ */
+
         await publishEvent(orderId, "routing", {
             message: "Fetching DEX quotes",
         });
@@ -93,9 +116,8 @@ const worker = new Worker(
                 ? { dex: "raydium", quote: rayQuote, amountOut: rayOut }
                 : { dex: "meteora", quote: meteQuote, amountOut: meteOut };
 
-        await pool.query(
-            `UPDATE orders SET status=$1, chosen_dex=$2 WHERE id=$3`,
-            ["routing", chosen.dex, orderId]
+        console.log(
+            `[ORDER ${orderId}] ROUTING -> Raydium=${rayOut} | Meteora=${meteOut} | chosen=${chosen.dex}`
         );
 
         await publishEvent(orderId, "routing", {
@@ -104,21 +126,33 @@ const worker = new Worker(
             decision: chosen.dex,
         });
 
-        /* --------------------------- 3) BUILDING -------------------------- */
+        try {
+            await query(
+                `UPDATE orders SET chosen_dex=$1 WHERE id=$2`,
+                [chosen.dex, orderId]
+            );
+        } catch (err) {
+            console.error("DB chosen_dex update failed:", (err as any)?.message);
+        }
+
+        /* ------------------------------ BUILDING ----------------------------- */
+
         await publishEvent(orderId, "building", {
             message: "Building transaction",
             dex: chosen.dex,
         });
 
-        await sleep(200); // mock tx build
+        await sleep(150);
 
-        /* -------------------------- 4) SUBMITTED -------------------------- */
+        /* ------------------------------ SUBMITTED ---------------------------- */
+
         await publishEvent(orderId, "submitted", {
             message: "Submitting transaction",
             dex: chosen.dex,
         });
 
-        /* --------------------------- 5) EXECUTE --------------------------- */
+        /* ------------------------------ EXECUTION ---------------------------- */
+
         try {
             const result = await dex.executeSwap(
                 chosen.dex as any,
@@ -126,11 +160,11 @@ const worker = new Worker(
                 slippageTolerance
             );
 
-            /* --------------------------- SUCCESS --------------------------- */
-
-            await pool.query(
-                `UPDATE orders SET status=$1, executed_price=$2, tx_hash=$3 WHERE id=$4`,
-                ["confirmed", result.executedPrice, result.txHash, orderId]
+            await query(
+                `UPDATE orders 
+           SET status='confirmed', executed_price=$1, tx_hash=$2, updated_at=NOW()
+         WHERE id=$3`,
+                [result.executedPrice, result.txHash, orderId]
             );
 
             await publishEvent(orderId, "confirmed", {
@@ -138,24 +172,24 @@ const worker = new Worker(
                 executedPrice: result.executedPrice,
             });
 
-            return;
-        } catch (err: any) {
-            /* --------------------------- FAILURE --------------------------- */
-
-            const errorMsg = err?.message || "Unknown error";
-
-            await pool.query(
-                `UPDATE orders
-         SET attempts = attempts + 1
-         WHERE id = $1`,
-                [orderId]
+            console.log(
+                `[ORDER ${orderId}] CONFIRMED | tx=${result.txHash} | price=${result.executedPrice}`
             );
+        } catch (err: any) {
+            /* ------------------------------ FAILURE ----------------------------- */
+
+            const errorMsg = String(err?.message || "Execution failed");
 
             const attempt = job.attemptsMade + 1;
 
-            await pool.query(
+            await query(
+                `UPDATE orders SET attempts = attempts + 1 WHERE id=$1`,
+                [orderId]
+            );
+
+            await query(
                 `INSERT INTO order_failures(order_id, attempt, error)
-         VALUES($1, $2, $3)`,
+         VALUES ($1, $2, $3)`,
                 [orderId, attempt, errorMsg]
             );
 
@@ -164,13 +198,9 @@ const worker = new Worker(
                 attempt,
             });
 
-            console.error(
-                `Order ${orderId} failed attempt ${attempt} :`,
-                errorMsg
-            );
+            console.error(`[ORDER ${orderId}] FAILED | ${errorMsg}`);
 
-            // rethrow so BullMQ retries (since attempts: 3 configured)
-            throw err;
+            throw err; // BullMQ retry
         }
     },
     {
@@ -179,17 +209,33 @@ const worker = new Worker(
     }
 );
 
-/* --------------------------- LOGGING EVENTS --------------------------- */
+/* ----------------------------- WORKER LOGGING ----------------------------- */
 
 worker.on("completed", (job) => {
-    console.log(`Job completed:`, job.id);
+    console.log(`[WORKER] Job completed: ${job.id}`);
 });
 
 worker.on("failed", (job, err) => {
     console.error(
-        `Worker job failed: ${job?.id} ->`,
-        err?.message
+        `[WORKER] Job failed: ${job?.id} |`,
+        (err as any)?.message
     );
 });
+
+/* ----------------------------- GRACEFUL SHUTDOWN ----------------------------- */
+
+const shutdown = async () => {
+    console.log("[WORKER] Shutting down...");
+    try {
+        await worker.close();
+    } catch {}
+    try {
+        await publisher.quit();
+    } catch {}
+    process.exit(0);
+};
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
 
 export default worker;

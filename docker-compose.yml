@@ -1,4 +1,5 @@
 version: "3.8"
+
 services:
   postgres:
     image: postgres:15
@@ -28,11 +29,15 @@ services:
     image: adminer:latest
     container_name: orderengine_adminer
     restart: unless-stopped
-    ports:
-      - "8080:8080"
     depends_on:
       - postgres
+    ports:
+      - "8080:8080"
 
 volumes:
   pgdata:
   redisdata:
+
+networks:
+  default:
+    name: orderengine-net
