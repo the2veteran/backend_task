@@ -1,4 +1,4 @@
-// src/server/index.ts
+
 import Fastify from 'fastify';
 import websocketPlugin from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';

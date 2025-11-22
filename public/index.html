@@ -4,10 +4,21 @@
     <title>Order Execution Stream</title>
     <style>
         body { font-family: Arial; padding: 20px; background: #f8f8f8; }
-        .log { white-space: pre-line; background: #000; color: #0f0;
-            padding: 10px; height: 300px; overflow-y: scroll; }
-        .box { background:#fff; padding:20px; border-radius:8px; width:400px; }
-        button { padding:10px 15px; }
+        .log {
+            white-space: pre-line;
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            height: 300px;
+            overflow-y: scroll;
+        }
+        .box {
+            background:#fff;
+            padding:20px;
+            border-radius:8px;
+            width:400px;
+        }
+        button { padding:10px 15px; cursor:pointer; }
     </style>
 </head>
 <body>
@@ -25,15 +36,22 @@
     <input id="amountIn" type="number" value="5"><br><br>
 
     <button onclick="submitOrder()">Submit Order & Auto-Stream</button>
+    <button onclick="clearLogs()" style="margin-left:10px;">Clear Logs</button>
 </div>
 
 <h3>Live Updates</h3>
 <div id="log" class="log"></div>
 
 <script>
+    function clearLogs() {
+        document.getElementById('log').innerText = "";
+    }
+
     async function submitOrder() {
         const log = document.getElementById('log');
-        log.innerText = "Submitting order...\n";
+
+        // Append instead of overwriting
+        log.innerText += "\n\n--- New Order ---\nSubmitting order...\n";
 
         const payload = {
             tokenIn: document.getElementById('tokenIn').value,
@@ -41,7 +59,7 @@
             amountIn: Number(document.getElementById('amountIn').value)
         };
 
-        // --- POST request to create order ---
+        // POST request to create order
         const res = await fetch("/api/orders/execute", {
             method: "POST",
             headers: { "Content-Type":"application/json" },
@@ -51,7 +69,7 @@
         const { orderId } = await res.json();
         log.innerText += `Order Created: ${orderId}\nConnecting WebSocket...\n\n`;
 
-        // --- Auto-open WebSocket ---
+        // Auto-open WebSocket
         const ws = new WebSocket(`ws://${location.host}/api/orders/execute?orderId=${orderId}`);
 
         ws.onopen = () => {

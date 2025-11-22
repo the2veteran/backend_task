@@ -1,6 +1,5 @@
 
-// NOTE: This test is opportunistic; swap failure is ~3% random.
-// We'll just assert that a failed event is possible in a batch of orders.
+
 const { createOrder, waitForStatuses } = require('./_helpers');
 
 test('at least one failure in batch of 20 (maybe)', async () => {

@@ -1,4 +1,4 @@
-// src/server/orders.ts
+
 import { FastifyInstance } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { orderQueue } from '../services/queue';
@@ -7,7 +7,6 @@ import { redis } from '../services/redis';
 
 export default async function ordersRoute(fastify: FastifyInstance) {
 
-    // ------------------ POST: create order ------------------
     fastify.post('/api/orders/execute', async (req, reply) => {
         const body = req.body as any;
 
@@ -47,7 +46,7 @@ export default async function ordersRoute(fastify: FastifyInstance) {
         return reply.send({ orderId });
     });
 
-    // ------------------ WEBSOCKET: same endpoint ------------------
+
     fastify.get(
         '/api/orders/execute',
         { websocket: true },

@@ -1,4 +1,4 @@
-// src/workers/orderWorker.ts
+
 
 import { Worker, Job } from "bullmq";
 import IORedis from "ioredis";
@@ -9,7 +9,6 @@ import { sleep } from "../utils/sleep";
 
 dotenv.config();
 
-/* ----------------------- REDIS CONNECTION OPTIONS ------------------------ */
 
 const redisOptions = {
     host: process.env.REDIS_HOST || "localhost",
@@ -18,19 +17,14 @@ const redisOptions = {
     enableReadyCheck: false,
 };
 
-/* ----------------------------- REDIS PUBLISHER --------------------------- */
 
 const publisher = new IORedis(redisOptions);
 
-/* ----------------------------- DEX ROUTER SETUP -------------------------- */
-
 const dex = new MockDexRouter();
 
-/* ------------------------------ CONCURRENCY ------------------------------ */
 
 const MAX_CONC = Number(process.env.MAX_CONCURRENCY || 10);
 
-/* --------------------------- PUBLISHER HELPER ---------------------------- */
 
 async function publishEvent(
     orderId: string,
@@ -72,7 +66,6 @@ async function publishEvent(
     }
 }
 
-/* -------------------------------- WORKER -------------------------------- */
 
 const worker = new Worker(
     "orders",
@@ -91,13 +84,11 @@ const worker = new Worker(
             `[ORDER ${orderId}] Worker started | ${tokenIn}→${tokenOut} | amount=${amountIn}`
         );
 
-        /* ------------------------------ PENDING ------------------------------ */
 
         await publishEvent(orderId, "pending", {
             message: "Worker picked up job",
         });
 
-        /* ------------------------------ ROUTING ------------------------------ */
 
         await publishEvent(orderId, "routing", {
             message: "Fetching DEX quotes",
@@ -135,7 +126,6 @@ const worker = new Worker(
             console.error("DB chosen_dex update failed:", (err as any)?.message);
         }
 
-        /* ------------------------------ BUILDING ----------------------------- */
 
         await publishEvent(orderId, "building", {
             message: "Building transaction",
@@ -144,14 +134,12 @@ const worker = new Worker(
 
         await sleep(150);
 
-        /* ------------------------------ SUBMITTED ---------------------------- */
 
         await publishEvent(orderId, "submitted", {
             message: "Submitting transaction",
             dex: chosen.dex,
         });
 
-        /* ------------------------------ EXECUTION ---------------------------- */
 
         try {
             const result = await dex.executeSwap(
@@ -176,7 +164,7 @@ const worker = new Worker(
                 `[ORDER ${orderId}] CONFIRMED | tx=${result.txHash} | price=${result.executedPrice}`
             );
         } catch (err: any) {
-            /* ------------------------------ FAILURE ----------------------------- */
+
 
             const errorMsg = String(err?.message || "Execution failed");
 
@@ -209,7 +197,6 @@ const worker = new Worker(
     }
 );
 
-/* ----------------------------- WORKER LOGGING ----------------------------- */
 
 worker.on("completed", (job) => {
     console.log(`[WORKER] Job completed: ${job.id}`);
@@ -222,7 +209,6 @@ worker.on("failed", (job, err) => {
     );
 });
 
-/* ----------------------------- GRACEFUL SHUTDOWN ----------------------------- */
 
 const shutdown = async () => {
     console.log("[WORKER] Shutting down...");

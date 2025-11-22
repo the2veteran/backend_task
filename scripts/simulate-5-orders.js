@@ -1,6 +1,4 @@
 
-// scripts/simulate-5-orders.js
-// Usage: node scripts/simulate-5-orders.js http://localhost:3000 ws://localhost:3000
 
 const axios = require('axios');
 const WebSocket = require('ws');
