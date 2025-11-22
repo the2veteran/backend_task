@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Order Execution Stream</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f8f8f8; }
+        .log { white-space: pre-line; background: #000; color: #0f0;
+            padding: 10px; height: 300px; overflow-y: scroll; }
+        .box { background:#fff; padding:20px; border-radius:8px; width:400px; }
+        button { padding:10px 15px; }
+    </style>
+</head>
+<body>
+
+<h2>Order Execution Engine — Live Stream</h2>
+
+<div class="box">
+    <label>Token In:</label><br>
+    <input id="tokenIn" value="SOL"><br><br>
+
+    <label>Token Out:</label><br>
+    <input id="tokenOut" value="USDC"><br><br>
+
+    <label>Amount In:</label><br>
+    <input id="amountIn" type="number" value="5"><br><br>
+
+    <button onclick="submitOrder()">Submit Order & Auto-Stream</button>
+</div>
+
+<h3>Live Updates</h3>
+<div id="log" class="log"></div>
+
+<script>
+    async function submitOrder() {
+        const log = document.getElementById('log');
+        log.innerText = "Submitting order...\n";
+
+        const payload = {
+            tokenIn: document.getElementById('tokenIn').value,
+            tokenOut: document.getElementById('tokenOut').value,
+            amountIn: Number(document.getElementById('amountIn').value)
+        };
+
+        // --- POST request to create order ---
+        const res = await fetch("/api/orders/execute", {
+            method: "POST",
+            headers: { "Content-Type":"application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const { orderId } = await res.json();
+        log.innerText += `Order Created: ${orderId}\nConnecting WebSocket...\n\n`;
+
+        // --- Auto-open WebSocket ---
+        const ws = new WebSocket(`ws://${location.host}/api/orders/execute?orderId=${orderId}`);
+
+        ws.onopen = () => {
+            log.innerText += "WS Connected!\n\n";
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                log.innerText += `[${data.status.toUpperCase()}] ${JSON.stringify(data.details)}\n`;
+                log.scrollTop = log.scrollHeight;
+            } catch {
+                log.innerText += event.data + "\n";
+            }
+        };
+
+        ws.onerror = (e) => {
+            log.innerText += "WS ERROR: " + e.message + "\n";
+        };
+
+        ws.onclose = () => {
+            log.innerText += "\nWS Closed.\n";
+        };
+    }
+</script>
+
+</body>
+</html>
