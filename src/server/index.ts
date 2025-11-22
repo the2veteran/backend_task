@@ -1,60 +1,28 @@
-import Fastify from "fastify";
-import websocketPlugin from "@fastify/websocket";
-import dotenv from "dotenv";
-import { pool } from "../DB";
-import { redis } from "../services/redis";
-import * as buffer from "node:buffer";
+// src/server/index.ts
+import Fastify from 'fastify';
+import websocketPlugin from '@fastify/websocket';
+import dotenv from 'dotenv';
+import ordersRoute from './orders';
+import { pool } from '../DB';
+import { redis } from '../services/redis';
 
 dotenv.config();
-
-const fastify = Fastify({
-    logger: true,
-});
-
-// Register WebSocket support (correct plugin)
+const fastify = Fastify({ logger: true });
 fastify.register(websocketPlugin);
 
-// Basic health check
-fastify.get("/health", async () => {
-    return { status: "ok" };
-});
+// register routes
+fastify.register(ordersRoute);
 
-// Root route
-fastify.get("/", async () => {
-    return { message: "Order Execution Engine Running" };
-});
+fastify.get('/health', async () => ({ status: 'ok' }));
 
-// WebSocket test endpoint (optional)
-fastify.get("/ws", { websocket: true }, (connection, req) => {
-    connection.socket.send("WebSocket Connected Successfully!");
-
-    connection.socket.on("message", (msg: Buffer) => {
-        console.log("Received:", msg.toString());
-    });
-});
-
-const startServer = async () => {
+const start = async () => {
     try {
         const port = Number(process.env.PORT) || 3000;
-        await fastify.listen({ port, host: "0.0.0.0" });
-        fastify.log.info(`Server running on port ${port}`);
+        await fastify.listen({ port, host: '0.0.0.0' });
+        console.log('Server listening', port);
     } catch (err) {
-        fastify.log.error(err);
+        console.error(err);
         process.exit(1);
     }
 };
-
-
-fastify.get("/db-test", async () => {
-    const res = await pool.query("SELECT NOW()");
-    return { db_time: res.rows[0] };
-});
-
-
-fastify.get("/redis-test", async () => {
-    await redis.set("test-key", "Hello Redis");
-    const val = await redis.get("test-key");
-    return { redis_value: val };
-});
-
-startServer();
+start();
